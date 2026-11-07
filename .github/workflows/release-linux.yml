@@ -1,0 +1,132 @@
+name: "Release Linux (.deb & .AppImage)"
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release Tag (leave empty to use version from tauri.conf.json)'
+        required: false
+        default: ''
+      draft:
+        description: 'Create as Draft Release'
+        required: false
+        type: boolean
+        default: false
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: release-linux-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-release:
+    name: Build & Publish Linux Packages
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine Version
+        id: get-version
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            APP_VERSION=$(grep -o '"version": "[^"]*"' frontend/src-tauri/tauri.conf.json | cut -d'"' -f4)
+            TAG="v${APP_VERSION}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "🏷️ Building Release Tag: $TAG"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+          run_install: false
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libasound2-dev \
+            fuse \
+            libfuse2
+
+      - name: Setup sidecar stubs (Hosted models mode)
+        run: |
+          echo "Creating llama-helper sidecar stub for hosted models mode..."
+          mkdir -p frontend/src-tauri/binaries
+          rustc -O -o frontend/src-tauri/binaries/llama-helper-x86_64-unknown-linux-gnu - << 'EOF'
+          fn main() { std::process::exit(0); }
+          EOF
+          chmod +x frontend/src-tauri/binaries/llama-helper-x86_64-unknown-linux-gnu
+          ls -la frontend/src-tauri/binaries/
+
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          pnpm install --frozen-lockfile
+
+      - name: Build Next.js frontend
+        run: |
+          cd frontend
+          pnpm build
+
+      - name: Build Linux Tauri Packages (.AppImage & .deb)
+        run: |
+          cd frontend
+          pnpm tauri build --bundles appimage,deb
+
+      - name: Verify generated bundles
+        id: verify-bundles
+        run: |
+          echo "Listing generated Linux bundles:"
+          find target/release/bundle/ -type f \( -name "*.AppImage" -o -name "*.deb" \) -exec ls -lh {} +
+
+      - name: Upload artifacts to Actions run
+        uses: actions/upload-artifact@v4
+        with:
+          name: meetily-linux-${{ steps.get-version.outputs.tag }}
+          path: |
+            target/release/bundle/appimage/*.AppImage
+            target/release/bundle/deb/*.deb
+          if-no-files-found: error
+
+      - name: Publish to GitHub Release
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.get-version.outputs.tag }}
+          name: Meetily ${{ steps.get-version.outputs.tag }}
+          draft: ${{ github.event.inputs.draft || false }}
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            target/release/bundle/appimage/*.AppImage
+            target/release/bundle/deb/*.deb
