@@ -152,6 +152,8 @@ async fn fetch_model_info(
 
     let response = client
         .post(&url)
+        .header("bypass-tunnel-reminder", "true")
+        .header("User-Agent", "Meetily/1.0")
         .json(&payload)
         .timeout(Duration::from_secs(5))
         .send()

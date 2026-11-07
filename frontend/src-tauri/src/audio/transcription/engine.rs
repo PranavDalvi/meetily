@@ -69,19 +69,21 @@ pub async fn validate_transcription_model_ready<R: Runtime>(app: &AppHandle<R>) 
             config
         }
         Ok(None) => {
-            info!("📝 No transcript config found, defaulting to parakeet");
+            info!("📝 No transcript config found, defaulting to hosted OpenAI ASR");
             crate::api::api::TranscriptConfig {
-                provider: "parakeet".to_string(),
-                model: crate::config::DEFAULT_PARAKEET_MODEL.to_string(),
+                provider: "openai".to_string(),
+                model: "asr-indic-transcribe".to_string(),
                 api_key: None,
+                endpoint: Some("https://plain-turtles-refuse.loca.lt/v1".to_string()),
             }
         }
         Err(e) => {
-            warn!("⚠️ Failed to get transcript config: {}, defaulting to parakeet", e);
+            warn!("⚠️ Failed to get transcript config: {}, defaulting to hosted OpenAI ASR", e);
             crate::api::api::TranscriptConfig {
-                provider: "parakeet".to_string(),
-                model: crate::config::DEFAULT_PARAKEET_MODEL.to_string(),
+                provider: "openai".to_string(),
+                model: "asr-indic-transcribe".to_string(),
                 api_key: None,
+                endpoint: Some("https://plain-turtles-refuse.loca.lt/v1".to_string()),
             }
         }
     };
@@ -135,6 +137,10 @@ pub async fn validate_transcription_model_ready<R: Runtime>(app: &AppHandle<R>) 
                 }
             }
         }
+        "openai" => {
+            info!("🌐 Hosted OpenAI/LiteLLM ASR model ready: {}", config.model);
+            Ok(())
+        }
         other => {
             warn!("❌ Unsupported transcription provider for local recording: {}", other);
             Err(format!(
@@ -165,25 +171,53 @@ pub async fn get_or_init_transcription_engine<R: Runtime>(
             config
         }
         Ok(None) => {
-            info!("📝 No transcript config found, defaulting to parakeet");
+            info!("📝 No transcript config found, defaulting to hosted OpenAI ASR");
             crate::api::api::TranscriptConfig {
-                provider: "parakeet".to_string(),
-                model: crate::config::DEFAULT_PARAKEET_MODEL.to_string(),
+                provider: "openai".to_string(),
+                model: "asr-indic-transcribe".to_string(),
                 api_key: None,
+                endpoint: Some("https://plain-turtles-refuse.loca.lt/v1".to_string()),
             }
         }
         Err(e) => {
-            warn!("⚠️ Failed to get transcript config: {}, defaulting to parakeet", e);
+            warn!("⚠️ Failed to get transcript config: {}, defaulting to hosted OpenAI ASR", e);
             crate::api::api::TranscriptConfig {
-                provider: "parakeet".to_string(),
-                model: crate::config::DEFAULT_PARAKEET_MODEL.to_string(),
+                provider: "openai".to_string(),
+                model: "asr-indic-transcribe".to_string(),
                 api_key: None,
+                endpoint: Some("https://plain-turtles-refuse.loca.lt/v1".to_string()),
             }
         }
     };
 
     // Initialize the appropriate engine based on provider
     match config.provider.as_str() {
+        "openai" => {
+            let endpoint = config
+                .endpoint
+                .unwrap_or_else(|| "https://plain-turtles-refuse.loca.lt/v1".to_string());
+            let api_key = config
+                .api_key
+                .unwrap_or_default();
+            if api_key.is_empty() {
+                warn!("⚠️ OpenAI transcript API key is empty! Set your API key in Settings or during onboarding.");
+            }
+            let model = if config.model.is_empty()
+                || config.model == crate::config::DEFAULT_PARAKEET_MODEL
+            {
+                "asr-indic-transcribe".to_string()
+            } else {
+                config.model
+            };
+            info!(
+                "🌐 Initializing Hosted OpenAI transcription engine (model: {}, endpoint: {})",
+                model, endpoint
+            );
+            let provider = Arc::new(super::hosted_openai_provider::HostedOpenAIProvider::new(
+                endpoint, api_key, model,
+            ));
+            Ok(TranscriptionEngine::Provider(provider))
+        }
         "parakeet" => {
             info!("🦜 Initializing Parakeet transcription engine");
 

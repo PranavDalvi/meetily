@@ -13,6 +13,7 @@ export interface TranscriptModelProps {
     provider: 'localWhisper' | 'parakeet' | 'deepgram' | 'elevenLabs' | 'groq' | 'openai';
     model: string;
     apiKey?: string | null;
+    endpoint?: string | null;
 }
 
 export interface TranscriptSettingsProps {
@@ -23,6 +24,7 @@ export interface TranscriptSettingsProps {
 
 export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelConfig, onModelSelect }: TranscriptSettingsProps) {
     const [apiKey, setApiKey] = useState<string | null>(transcriptModelConfig.apiKey || null);
+    const [endpoint, setEndpoint] = useState<string>(transcriptModelConfig.endpoint || 'https://plain-turtles-refuse.loca.lt/v1');
     const [showApiKey, setShowApiKey] = useState<boolean>(false);
     const [isApiKeyLocked, setIsApiKeyLocked] = useState<boolean>(true);
     const [isLockButtonVibrating, setIsLockButtonVibrating] = useState<boolean>(false);
@@ -31,7 +33,10 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
     // Sync uiProvider when backend config changes (e.g., after model selection or initial load)
     useEffect(() => {
         setUiProvider(transcriptModelConfig.provider);
-    }, [transcriptModelConfig.provider]);
+        if (transcriptModelConfig.endpoint) {
+            setEndpoint(transcriptModelConfig.endpoint);
+        }
+    }, [transcriptModelConfig.provider, transcriptModelConfig.endpoint]);
 
     useEffect(() => {
         if (transcriptModelConfig.provider === 'localWhisper' || transcriptModelConfig.provider === 'parakeet') {
@@ -41,9 +46,7 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
 
     const fetchApiKey = async (provider: string) => {
         try {
-
             const data = await invoke('api_get_transcript_api_key', { provider }) as string;
-
             setApiKey(data || '');
         } catch (err) {
             console.error('Error fetching API key:', err);
@@ -56,7 +59,7 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
         deepgram: ['nova-2-phonecall'],
         elevenLabs: ['eleven_multilingual_v2'],
         groq: ['llama-3.3-70b-versatile'],
-        openai: ['gpt-4o'],
+        openai: ['asr-indic-transcribe', 'indic-transcribe-flex', 'whisper-1'],
     };
     const requiresApiKey = transcriptModelConfig.provider === 'deepgram' || transcriptModelConfig.provider === 'elevenLabs' || transcriptModelConfig.provider === 'openai' || transcriptModelConfig.provider === 'groq';
 
@@ -121,12 +124,9 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
                                     <SelectValue placeholder="Select provider" />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    <SelectItem value="parakeet">⚡ Parakeet (Recommended - Real-time / Accurate)</SelectItem>
-                                    <SelectItem value="localWhisper">🏠 Local Whisper (High Accuracy)</SelectItem>
-                                    {/* <SelectItem value="deepgram">☁️ Deepgram (Backup)</SelectItem>
-                                    <SelectItem value="elevenLabs">☁️ ElevenLabs</SelectItem>
-                                    <SelectItem value="groq">☁️ Groq</SelectItem>
-                                    <SelectItem value="openai">☁️ OpenAI</SelectItem> */}
+                                    <SelectItem value="openai">🌐 Hosted ASR (LiteLLM / indic-transcribe)</SelectItem>
+                                    <SelectItem value="parakeet">⚡ Parakeet (Local)</SelectItem>
+                                    <SelectItem value="localWhisper">🏠 Local Whisper (Local)</SelectItem>
                                 </SelectContent>
                             </Select>
 
@@ -173,6 +173,33 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
                     )}
 
 
+                    {uiProvider === 'openai' && (
+                        <div>
+                            <Label className="block text-sm font-medium text-gray-700 mb-1">
+                                Hosted ASR Endpoint URL
+                            </Label>
+                            <div className="mx-1 mb-3">
+                                <Input
+                                    type="text"
+                                    className="focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                                    value={endpoint}
+                                    onChange={(e) => {
+                                        const newEndpoint = e.target.value;
+                                        setEndpoint(newEndpoint);
+                                        setTranscriptModelConfig({
+                                            ...transcriptModelConfig,
+                                            endpoint: newEndpoint,
+                                        });
+                                    }}
+                                    placeholder="https://plain-turtles-refuse.loca.lt/v1"
+                                />
+                                <p className="text-xs text-gray-500 mt-1">
+                                    Requests to this endpoint automatically include the bypass-tunnel-reminder header.
+                                </p>
+                            </div>
+                        </div>
+                    )}
+
                     {requiresApiKey && (
                         <div>
                             <Label className="block text-sm font-medium text-gray-700 mb-1">
@@ -184,7 +211,14 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
                                     className={`pr-24 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 ${isApiKeyLocked ? 'bg-gray-100 cursor-not-allowed' : ''
                                         }`}
                                     value={apiKey || ''}
-                                    onChange={(e) => setApiKey(e.target.value)}
+                                    onChange={(e) => {
+                                        const newKey = e.target.value;
+                                        setApiKey(newKey);
+                                        setTranscriptModelConfig({
+                                            ...transcriptModelConfig,
+                                            apiKey: newKey,
+                                        });
+                                    }}
                                     disabled={isApiKeyLocked}
                                     onClick={handleInputClick}
                                     placeholder="Enter your API key"

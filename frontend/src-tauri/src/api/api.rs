@@ -101,6 +101,7 @@ pub struct TranscriptConfig {
     pub model: String,
     #[serde(rename = "apiKey")]
     pub api_key: Option<String>,
+    pub endpoint: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -109,6 +110,7 @@ pub struct SaveTranscriptConfigRequest {
     pub model: String,
     #[serde(rename = "apiKey")]
     pub api_key: Option<String>,
+    pub endpoint: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -266,7 +268,10 @@ async fn make_api_request<R: Runtime, T: for<'de> Deserialize<'de>>(
         log_warn!("No auth token provided, making unauthenticated request");
     }
 
-    request = request.header("Content-Type", "application/json");
+    request = request
+        .header("Content-Type", "application/json")
+        .header("bypass-tunnel-reminder", "true")
+        .header("User-Agent", "Meetily/1.0");
 
     // Add additional headers if provided
     if let Some(headers) = additional_headers {
@@ -612,31 +617,35 @@ pub async fn api_get_transcript_config<R: Runtime>(
                 &config.provider,
                 &config.model
             );
-            match SettingsRepository::get_transcript_api_key(pool, &config.provider).await {
-                Ok(api_key) => {
-                    log_info!("Successfully retrieved transcript config and API key.");
-                    Ok(Some(TranscriptConfig {
-                        provider: config.provider,
-                        model: config.model,
-                        api_key,
-                    }))
-                }
-                Err(e) => {
-                    log_error!(
-                        "Failed to get transcript API key for provider {}: {}",
-                        &config.provider,
-                        e
-                    );
-                    Err(e.to_string())
-                }
-            }
+            let api_key = match SettingsRepository::get_transcript_api_key(pool, &config.provider).await {
+                Ok(k) => k,
+                Err(_) => None,
+            };
+            let final_api_key = api_key;
+            let final_endpoint = if config.provider == "openai" && config.endpoint.as_deref().unwrap_or("").is_empty() {
+                Some("https://plain-turtles-refuse.loca.lt/v1".to_string())
+            } else {
+                config.endpoint
+            };
+            let final_model = if config.provider == "openai" && (config.model.is_empty() || config.model == crate::config::DEFAULT_PARAKEET_MODEL) {
+                "asr-indic-transcribe".to_string()
+            } else {
+                config.model
+            };
+            Ok(Some(TranscriptConfig {
+                provider: config.provider,
+                model: final_model,
+                api_key: final_api_key,
+                endpoint: final_endpoint,
+            }))
         }
         Ok(None) => {
-            log_info!("No transcript config found, returning default.");
+            log_info!("No transcript config found, returning default hosted OpenAI config.");
             Ok(Some(TranscriptConfig {
-                provider: "parakeet".to_string(),
-                model: crate::config::DEFAULT_PARAKEET_MODEL.to_string(),
+                provider: "openai".to_string(),
+                model: "asr-indic-transcribe".to_string(),
                 api_key: None,
+                endpoint: Some("https://plain-turtles-refuse.loca.lt/v1".to_string()),
             }))
         }
         Err(e) => {
@@ -653,6 +662,7 @@ pub async fn api_save_transcript_config<R: Runtime>(
     provider: String,
     model: String,
     api_key: Option<String>,
+    endpoint: Option<String>,
     _auth_token: Option<String>,
 ) -> Result<serde_json::Value, String> {
     log_info!(
@@ -661,7 +671,7 @@ pub async fn api_save_transcript_config<R: Runtime>(
     );
     let pool = state.db_manager.pool();
 
-    if let Err(e) = SettingsRepository::save_transcript_config(pool, &provider, &model).await {
+    if let Err(e) = SettingsRepository::save_transcript_config(pool, &provider, &model, endpoint.as_deref()).await {
         log_error!("Failed to save transcript config: {}", e);
         return Err(e.to_string());
     }

@@ -22,6 +22,11 @@ pub enum StreamBackend {
     CoreAudio {
         task: Option<tokio::task::JoinHandle<()>>,
     },
+    /// PipeWire monitor stream for desktop audio (Linux only)
+    #[cfg(target_os = "linux")]
+    PipeWire {
+        task: Option<tokio::task::JoinHandle<()>>,
+    },
 }
 
 // SAFETY: While Stream doesn't implement Send, we ensure it's only accessed
@@ -85,6 +90,12 @@ impl AudioStream {
         if use_core_audio {
             info!("🎵 Stream: Using Core Audio backend (cidre) for system audio");
             return Self::create_core_audio_stream(device, state, device_type, recording_sender).await;
+        }
+
+        #[cfg(target_os = "linux")]
+        if device_type == DeviceType::System && which::which("pw-record").is_ok() {
+            info!("🎵 Stream: Using PipeWire sink monitor for system audio");
+            return Self::create_pipewire_stream(device, state, device_type, recording_sender).await;
         }
 
         // Default path: use CPAL
@@ -233,6 +244,100 @@ impl AudioStream {
         })
     }
 
+    /// Create a PipeWire monitor stream for system audio (Linux)
+    #[cfg(target_os = "linux")]
+    async fn create_pipewire_stream(
+        device: Arc<AudioDevice>,
+        state: Arc<RecordingState>,
+        device_type: DeviceType,
+        recording_sender: Option<mpsc::UnboundedSender<super::recording_state::AudioChunk>>,
+    ) -> Result<Self> {
+        info!("🔊 Stream: Creating PipeWire monitor stream for system audio: {}", device.name);
+
+        let sample_rate = 48000;
+        let channels = 2; // Stereo
+
+        let capture = AudioCapture::new(
+            device.clone(),
+            state.clone(),
+            sample_rate,
+            channels,
+            device_type,
+            recording_sender,
+        );
+
+        let mut cmd = tokio::process::Command::new("pw-record");
+        cmd.arg("-P")
+            .arg(r#"{"stream.capture.sink":true}"#)
+            .arg("--rate")
+            .arg("48000")
+            .arg("--channels")
+            .arg("2")
+            .arg("--format")
+            .arg("f32")
+            .arg("-a")
+            .arg("-")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null());
+
+        let mut child = cmd.spawn()
+            .map_err(|e| anyhow::anyhow!("Failed to spawn pw-record: {}", e))?;
+
+        let stdout = child.stdout.take()
+            .ok_or_else(|| anyhow::anyhow!("Failed to get pw-record stdout"))?;
+
+        let device_name = device.name.clone();
+        let task = tokio::spawn({
+            let capture = capture.clone();
+            async move {
+                use tokio::io::AsyncReadExt;
+                let mut reader = tokio::io::BufReader::new(stdout);
+                let mut byte_buffer = vec![0u8; 1024 * 4 * 2]; // 1024 frames of 2-ch f32
+                let mut float_buffer = Vec::with_capacity(1024 * 2);
+
+                info!("✅ Stream: PipeWire monitor task started for {}", device_name);
+
+                loop {
+                    match reader.read(&mut byte_buffer).await {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            let float_count = n / 4;
+                            float_buffer.clear();
+                            for i in 0..float_count {
+                                let b = [
+                                    byte_buffer[i * 4],
+                                    byte_buffer[i * 4 + 1],
+                                    byte_buffer[i * 4 + 2],
+                                    byte_buffer[i * 4 + 3],
+                                ];
+                                float_buffer.push(f32::from_le_bytes(b));
+                            }
+                            if !float_buffer.is_empty() {
+                                capture.process_audio_data(&float_buffer);
+                            }
+                        }
+                        Err(e) => {
+                            error!("PipeWire monitor read error: {}", e);
+                            break;
+                        }
+                    }
+                }
+
+                let _ = child.kill().await;
+                info!("⚠️ Stream: PipeWire monitor task ended for {}", device_name);
+            }
+        });
+
+        info!("✅ Stream: PipeWire system stream created for {}", device.name);
+
+        Ok(Self {
+            device: device.clone(),
+            backend: StreamBackend::PipeWire {
+                task: Some(task),
+            },
+        })
+    }
+
     /// Build stream based on sample format
     fn build_stream(
         device: &Device,
@@ -341,6 +446,15 @@ impl AudioStream {
                     // This helps ensure Arc references in the closure are dropped
                     std::thread::sleep(std::time::Duration::from_millis(50));
                     info!("Core Audio task aborted");
+                }
+            }
+            #[cfg(target_os = "linux")]
+            StreamBackend::PipeWire { task } => {
+                if let Some(task_handle) = task {
+                    info!("Aborting PipeWire monitor task...");
+                    task_handle.abort();
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    info!("PipeWire task aborted");
                 }
             }
         }

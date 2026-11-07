@@ -47,6 +47,12 @@ interface OnboardingContextType {
   recommendedSummaryModel: string;
   databaseExists: boolean;
   isBackgroundDownloading: boolean;
+  // API Key & Server Endpoint
+  apiKey: string;
+  setApiKey: (key: string) => void;
+  endpoint: string;
+  setEndpoint: (endpoint: string) => void;
+  validateApiKey: (keyToTest?: string) => Promise<{ valid: boolean; error?: string }>;
   // Permissions
   permissions: OnboardingPermissions;
   permissionsSkipped: boolean;
@@ -61,7 +67,7 @@ interface OnboardingContextType {
   setDatabaseExists: (value: boolean) => void;
   setPermissionStatus: (permission: keyof OnboardingPermissions, status: PermissionStatus) => void;
   setPermissionsSkipped: (skipped: boolean) => void;
-  completeOnboarding: () => Promise<void>;
+  completeOnboarding: (customApiKey?: string, customEndpoint?: string) => Promise<void>;
   startBackgroundDownloads: (options: StartBackgroundDownloadsOptions) => Promise<void>;
   retryParakeetDownload: () => Promise<void>;
 }
@@ -97,6 +103,36 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
   const [recommendedSummaryModel, setRecommendedSummaryModel] = useState<string>('');
   const [databaseExists, setDatabaseExists] = useState(false);
   const [isBackgroundDownloading, setIsBackgroundDownloading] = useState(false);
+  const [apiKey, setApiKey] = useState<string>('');
+  const [endpoint, setEndpoint] = useState<string>('https://plain-turtles-refuse.loca.lt/v1');
+
+  const validateApiKey = async (keyToTest?: string): Promise<{ valid: boolean; error?: string }> => {
+    const key = (keyToTest !== undefined ? keyToTest : apiKey).trim();
+    if (!key) {
+      return { valid: false, error: 'Access key is required' };
+    }
+    try {
+      const trimmedEndpoint = endpoint.trim().replace(/\/+$/, '');
+      const response = await fetch(`${trimmedEndpoint}/models`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${key}`,
+          'bypass-tunnel-reminder': 'true',
+        },
+      });
+      if (response.ok) {
+        return { valid: true };
+      }
+      if (response.status === 401 || response.status === 403) {
+        return { valid: false, error: 'Invalid access key. Please verify the key provided by your administrator.' };
+      }
+      return { valid: false, error: `Server returned status ${response.status}` };
+    } catch (e) {
+      console.warn('[OnboardingContext] Server check failed:', e);
+      // Fallback: don't block user if network is momentarily unavailable
+      return { valid: true };
+    }
+  };
 
   // Permissions state
   const [permissions, setPermissions] = useState<OnboardingPermissions>({
@@ -110,26 +146,14 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
 
   const initializeSummaryModelSelection = async (preferredModel = selectedSummaryModel) => {
     try {
-      const recommendedModel = await invoke<string>('builtin_ai_get_recommended_model');
-      setRecommendedSummaryModel(recommendedModel);
-      const modelToCheck = preferredModel || recommendedModel;
+      const modelToCheck = preferredModel || 'gemma-4';
+      setRecommendedSummaryModel('gemma-4');
       setSelectedSummaryModel(modelToCheck);
-
-      const selectedModelReady = await invoke<boolean>('builtin_ai_is_model_ready', {
-        modelName: modelToCheck,
-        refresh: true,
-      });
-      const resolved = resolveOnboardingSummaryModelStatus({
-        selectedModel: preferredModel,
-        recommendedModel,
-        selectedModelReady,
-      });
-
-      setSelectedSummaryModel(resolved.selectedSummaryModel);
-      setSummaryModelDownloaded(resolved.summaryModelDownloaded);
-      console.log('[OnboardingContext] Set recommended model:', resolved.selectedSummaryModel);
-
-      return resolved;
+      setSummaryModelDownloaded(true);
+      return {
+        selectedSummaryModel: modelToCheck,
+        summaryModelDownloaded: true,
+      };
     } catch (error) {
       console.error('[OnboardingContext] Failed to initialize summary model:', error);
       return null;
@@ -137,14 +161,7 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
   };
 
   const requestSummaryModelDownload = (modelName: string) => {
-    console.log('[OnboardingContext] Starting Summary Model download');
-    invoke('builtin_ai_download_model', { modelName })
-      .catch(err => {
-        if (String(err).includes('Download already in progress')) {
-          return;
-        }
-        console.error('[OnboardingContext] Summary Model download failed:', err);
-      });
+    console.log('[OnboardingContext] Hosted mode active: Skipping Summary Model download for', modelName);
   };
 
   // Load status on mount and initialize database
@@ -468,7 +485,7 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
     }
   };
 
-  const completeOnboarding = async () => {
+  const completeOnboarding = async (customApiKey?: string, customEndpoint?: string) => {
     try {
       // Set completion flag to prevent race conditions with auto-save
       isCompletingRef.current = true;
@@ -479,24 +496,17 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
         saveTimeoutRef.current = undefined;
       }
 
-      let modelToSave = selectedSummaryModel;
-      if (!modelToSave) {
-        modelToSave = await invoke<string>('builtin_ai_get_recommended_model');
-        setSelectedSummaryModel(modelToSave);
-      }
+      let modelToSave = selectedSummaryModel || 'gemma-4';
+      setSummaryModelDownloaded(true);
 
-      const selectedModelReady = await invoke<boolean>('builtin_ai_is_model_ready', {
-        modelName: modelToSave,
-        refresh: true,
-      });
-      setSummaryModelDownloaded(selectedModelReady);
-      if (!selectedModelReady) {
-        requestSummaryModelDownload(modelToSave);
-      }
+      const keyToUse = (customApiKey !== undefined ? customApiKey : apiKey).trim();
+      const endpointToUse = (customEndpoint !== undefined ? customEndpoint : endpoint).trim();
 
-      // Onboarding always uses builtin-ai with selected model
+      // Onboarding saves custom-openai with Gemma 4 and hosted ASR with the user's provided API key
       await invoke('complete_onboarding', {
         model: modelToSave,
+        apiKey: keyToUse || null,
+        endpoint: endpointToUse || null,
       });
       setCompleted(true);
       console.log('[OnboardingContext] Onboarding completed with model:', modelToSave);
@@ -510,47 +520,16 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
     }
   };
 
-  // Start background downloads for models.
+  // Start background downloads for models (hosted mode bypass).
   const startBackgroundDownloads = async ({
     includeParakeet,
     includeSummary,
     summaryModel,
   }: StartBackgroundDownloadsOptions) => {
-    console.log('[OnboardingContext] Starting background downloads:', {
-      includeParakeet,
-      includeSummary,
-      summaryModel,
-    });
-
-    try {
-      const shouldStartParakeet = includeParakeet && !parakeetDownloaded;
-      const shouldStartSummary = includeSummary && !summaryModelDownloaded && !!summaryModel;
-
-      if (!shouldStartParakeet && !shouldStartSummary) {
-        if (includeSummary && !summaryModelDownloaded && !summaryModel) {
-          console.warn('[OnboardingContext] Summary Model download skipped until recommendation is loaded');
-        }
-        return;
-      }
-
-      setIsBackgroundDownloading(true);
-
-      // Start Parakeet download first (speech recognition - always required)
-      if (shouldStartParakeet) {
-        console.log('[OnboardingContext] Starting Parakeet download');
-        invoke('parakeet_download_model', { modelName: PARAKEET_MODEL })
-          .catch(err => console.error('[OnboardingContext] Parakeet download failed:', err));
-      }
-
-      // Start selected Summary Model download immediately so completion cannot race the request.
-      if (shouldStartSummary && summaryModel) {
-        requestSummaryModelDownload(summaryModel);
-      }
-    } catch (error) {
-      console.error('[OnboardingContext] Failed to start background downloads:', error);
-      setIsBackgroundDownloading(false);
-      throw error;
-    }
+    console.log('[OnboardingContext] Hosted mode: Background downloads bypassed');
+    setParakeetDownloaded(true);
+    setSummaryModelDownloaded(true);
+    setIsBackgroundDownloading(false);
   };
 
   // Check if any models are currently downloading (for re-entry)
@@ -622,6 +601,11 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
         recommendedSummaryModel,
         databaseExists,
         isBackgroundDownloading,
+        apiKey,
+        setApiKey,
+        endpoint,
+        setEndpoint,
+        validateApiKey,
         permissions,
         permissionsSkipped,
         goToStep,

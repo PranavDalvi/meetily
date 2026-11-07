@@ -190,25 +190,28 @@ pub async fn initialize_fresh_database(app: AppHandle) -> Result<(), String> {
     // Set default model configuration for fresh installs
     let pool = db_manager.pool();
     
-    let default_summary_model = crate::summary::summary_engine::commands::get_recommended_summary_model_for_current_system()
-        .unwrap_or("qwen3.5:2b");
-
-    // Default Summary Model: Built-in AI (Qwen recommendation for this system)
-    if let Err(e) = crate::database::repositories::setting::SettingsRepository::save_model_config(
+    // Default Summary Model: Hosted Custom OpenAI with Gemma 4
+    let custom_summary_config = crate::summary::CustomOpenAIConfig {
+        endpoint: "https://plain-turtles-refuse.loca.lt/v1".to_string(),
+        api_key: None,
+        model: "gemma-4".to_string(),
+        max_tokens: None,
+        temperature: None,
+        top_p: None,
+    };
+    if let Err(e) = crate::database::repositories::setting::SettingsRepository::save_custom_openai_config(
         pool,
-        "builtin-ai",
-        default_summary_model,
-        "large-v3", // Default whisper model (unused for builtin but required)
-        None,
+        &custom_summary_config,
     ).await {
-        error!("Failed to set default summary model config: {}", e);
+        error!("Failed to set default custom OpenAI summary config: {}", e);
     }
 
-    // Default Transcription Model: Parakeet
+    // Default Transcription Model: Hosted OpenAI (indic-transcribe)
     if let Err(e) = crate::database::repositories::setting::SettingsRepository::save_transcript_config(
         pool,
-        "parakeet",
-        crate::config::DEFAULT_PARAKEET_MODEL,
+        "openai",
+        "asr-indic-transcribe",
+        Some("https://plain-turtles-refuse.loca.lt/v1"),
     ).await {
         error!("Failed to set default transcription model config: {}", e);
     }

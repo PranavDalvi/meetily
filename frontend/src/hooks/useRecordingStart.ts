@@ -78,10 +78,14 @@ export function useRecordingStart(
     }
   }, []);
 
-  // Check the selected local transcription provider, not a hardcoded engine.
+  // Check the selected local or hosted transcription provider
   const checkTranscriptionModelReady = useCallback(async (): Promise<boolean> => {
     try {
       const provider = await getTranscriptionProvider();
+      if (provider === 'openai') {
+        // Hosted ASR provider is ready
+        return true;
+      }
       const commands = getProviderCommands(provider);
 
       if (commands) {
@@ -101,6 +105,9 @@ export function useRecordingStart(
   const checkIfModelDownloading = useCallback(async (): Promise<boolean> => {
     try {
       const provider = await getTranscriptionProvider();
+      if (provider === 'openai') {
+        return false;
+      }
       const commands = getProviderCommands(provider);
       if (!commands) return false;
 

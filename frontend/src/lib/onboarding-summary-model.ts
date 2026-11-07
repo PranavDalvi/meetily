@@ -10,6 +10,7 @@ interface OnboardingSummaryModelStatus {
 }
 
 const SUMMARY_MODEL_SIZES_MB: Record<string, number> = {
+  'gemma-4': 0,
   'qwen3.5:2b': 1221,
   'qwen3.5:4b': 2614,
   'gemma3:1b': 1019,
@@ -19,13 +20,12 @@ const SUMMARY_MODEL_SIZES_MB: Record<string, number> = {
 export function resolveOnboardingSummaryModelStatus({
   selectedModel,
   recommendedModel,
-  selectedModelReady,
 }: OnboardingSummaryModelStatusInput): OnboardingSummaryModelStatus {
-  const selectedSummaryModel = selectedModel || recommendedModel;
+  const selectedSummaryModel = selectedModel || recommendedModel || 'gemma-4';
 
   return {
     selectedSummaryModel,
-    summaryModelDownloaded: Boolean(selectedSummaryModel && selectedModelReady),
+    summaryModelDownloaded: true,
   };
 }
 

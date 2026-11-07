@@ -108,11 +108,12 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   const [isModelConfigLoading, setIsModelConfigLoading] = useState(true);
 
 
-  // Transcript model configuration state
+  // Transcript model configuration state - defaults to hosted ASR
   const [transcriptModelConfig, setTranscriptModelConfig] = useState<TranscriptModelProps>({
-    provider: 'parakeet',
-    model: 'parakeet-tdt-0.6b-v3-int8',
-    apiKey: null
+    provider: 'openai',
+    model: 'asr-indic-transcribe',
+    apiKey: null,
+    endpoint: 'https://plain-turtles-refuse.loca.lt/v1'
   });
 
   // Provider-specific API keys (loaded once at startup)
@@ -202,9 +203,10 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
         if (config) {
           console.log('[ConfigContext] Loaded saved transcript config:', config);
           setTranscriptModelConfig({
-            provider: config.provider || 'parakeet',
-            model: config.model || 'parakeet-tdt-0.6b-v3-int8',
-            apiKey: config.apiKey || null
+            provider: config.provider || 'openai',
+            model: config.model || 'asr-indic-transcribe',
+            apiKey: config.apiKey ?? null,
+            endpoint: config.endpoint ?? 'https://plain-turtles-refuse.loca.lt/v1'
           });
         }
       } catch (error) {

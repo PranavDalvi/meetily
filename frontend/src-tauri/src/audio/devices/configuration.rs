@@ -70,18 +70,17 @@ impl AudioDevice {
 
         let (name, device_type) = if name.to_lowercase().ends_with("(input)") {
             (
-                name.trim_end_matches("(input)").trim().to_string(),
+                name[..name.len() - 7].trim().to_string(),
                 DeviceType::Input,
             )
         } else if name.to_lowercase().ends_with("(output)") {
             (
-                name.trim_end_matches("(output)").trim().to_string(),
+                name[..name.len() - 8].trim().to_string(),
                 DeviceType::Output,
             )
         } else {
-            return Err(anyhow!(
-                "Device type (input/output) not specified in the name"
-            ));
+            // Default to Input if direction tag is omitted
+            (name.trim().to_string(), DeviceType::Input)
         };
 
         Ok(AudioDevice::new(name, device_type))

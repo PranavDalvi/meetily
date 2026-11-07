@@ -34,25 +34,31 @@ export function DownloadProgressStep() {
     setSummaryModelDownloaded,
     startBackgroundDownloads,
     completeOnboarding,
+    endpoint,
   } = useOnboarding();
 
   const [isMac, setIsMac] = useState(false);
 
   const [parakeetState, setParakeetState] = useState<DownloadState>({
-    status: parakeetDownloaded ? 'completed' : 'waiting',
-    progress: parakeetDownloaded ? 100 : 0,
-    downloadedMb: 0,
-    totalMb: 670,
-    speedMbps: 0,
-  });
-
-  const [summaryState, setSummaryState] = useState<DownloadState>({
-    status: summaryModelDownloaded ? 'completed' : 'waiting',
-    progress: summaryModelDownloaded ? 100 : 0,
+    status: 'completed',
+    progress: 100,
     downloadedMb: 0,
     totalMb: 0,
     speedMbps: 0,
   });
+
+  const [summaryState, setSummaryState] = useState<DownloadState>({
+    status: 'completed',
+    progress: 100,
+    downloadedMb: 0,
+    totalMb: 0,
+    speedMbps: 0,
+  });
+
+  useEffect(() => {
+    setParakeetDownloaded(true);
+    setSummaryModelDownloaded(true);
+  }, []);
 
   const [isCompleting, setIsCompleting] = useState(false);
   const parakeetDownloadStartedRef = useRef(false);
@@ -165,34 +171,11 @@ export function DownloadProgressStep() {
     checkPlatform();
   }, []);
 
-  // Start the required transcription model immediately; summary readiness must not block it.
+  // Hosted mode: local downloads are bypassed
   useEffect(() => {
-    if (parakeetDownloadStartedRef.current) return;
     parakeetDownloadStartedRef.current = true;
-
-    if (!parakeetDownloaded) {
-      setParakeetState((prev) => ({ ...prev, status: 'downloading' }));
-    }
-
-    startBackgroundDownloads({
-      includeParakeet: true,
-      includeSummary: false,
-    }).catch((error) => {
-      console.error('Failed to start Parakeet download:', error);
-      if (!parakeetDownloaded) {
-        setParakeetState((prev) => ({ ...prev, status: 'error', error: String(error) }));
-      }
-    });
-  }, []);
-
-  // Start the selected summary model only after the backend recommendation is known.
-  useEffect(() => {
-    if (summaryDownloadStartedRef.current) return;
-    if (!selectedSummaryModel) return;
     summaryDownloadStartedRef.current = true;
-
-    startSummaryDownload();
-  }, [selectedSummaryModel]);
+  }, []);
 
   // Listen to Parakeet download progress
   useEffect(() => {
@@ -298,71 +281,37 @@ export function DownloadProgressStep() {
   }, [selectedSummaryModel]);
 
   useEffect(() => {
-    const modelForSize = selectedSummaryModel || recommendedSummaryModel;
-    if (!modelForSize) return;
-
-    setSummaryState((prev) => ({
-      ...prev,
-      status: summaryModelDownloaded
-        ? 'completed'
-        : prev.status === 'completed'
-        ? 'waiting'
-        : prev.status,
-      progress: summaryModelDownloaded
-        ? 100
-        : prev.status === 'completed'
-        ? 0
-        : prev.progress,
-      totalMb: prev.totalMb || getSummaryModelSizeMb(modelForSize),
-    }));
-  }, [selectedSummaryModel, recommendedSummaryModel, summaryModelDownloaded]);
+    setSummaryState({
+      status: 'completed',
+      progress: 100,
+      downloadedMb: 0,
+      totalMb: 0,
+      speedMbps: 0,
+    });
+    setParakeetState({
+      status: 'completed',
+      progress: 100,
+      downloadedMb: 0,
+      totalMb: 0,
+      speedMbps: 0,
+    });
+    setSummaryModelDownloaded(true);
+    setParakeetDownloaded(true);
+  }, []);
 
   const startSummaryDownload = async () => {
-    if (!summaryModelDownloaded && selectedSummaryModel) {
-      try {
-        setSummaryState((prev) => ({
-          ...prev,
-          status: 'downloading',
-          totalMb: getSummaryModelSizeMb(selectedSummaryModel),
-        }));
-        await startBackgroundDownloads({
-          includeParakeet: false,
-          includeSummary: true,
-          summaryModel: selectedSummaryModel,
-        });
-      } catch (error) {
-        console.error('Failed to start summary model download:', error);
-        setSummaryState((prev) => ({ ...prev, status: 'error', error: String(error) }));
-      }
-    }
+    setSummaryState({
+      status: 'completed',
+      progress: 100,
+      downloadedMb: 0,
+      totalMb: 0,
+      speedMbps: 0,
+    });
+    setSummaryModelDownloaded(true);
   };
 
   const handleContinue = async () => {
-    // Verify actual model availability (catches state drift)
-    try {
-      await invoke('parakeet_init');
-      const actuallyAvailable = await invoke<boolean>('parakeet_has_available_models');
-
-      if (actuallyAvailable && !parakeetDownloaded) {
-        console.log('[DownloadProgressStep] Model available but state not updated');
-        setParakeetDownloaded(true);
-        setParakeetState((prev) => ({
-          ...prev,
-          status: 'completed',
-          progress: 100,
-        }));
-      } else if (
-        !actuallyAvailable &&
-        (parakeetState.status === 'error' || parakeetState.status === 'cancelled')
-      ) {
-        toast.error('Transcription engine required', {
-          description: 'Please retry the download before continuing.',
-        });
-        return;
-      }
-    } catch (error) {
-      console.warn('[DownloadProgressStep] Failed to verify model:', error);
-    }
+    // Hosted ASR is active by default
 
     // Check if downloads are complete for toast notification
     const downloadsComplete = parakeetState.status === 'completed' &&
@@ -488,10 +437,12 @@ export function DownloadProgressStep() {
     </div>
   );
 
+  const cleanHost = (endpoint || 'https://plain-turtles-refuse.loca.lt/v1').replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+
   return (
     <OnboardingContainer
-      title="Getting things ready"
-      description="You can start using Meetily after downloading the Transcription Engine."
+      title="Ready to go"
+      description={`Connected to hosted AI services on ${cleanHost}.`}
       step={3}
       totalSteps={isMac ? 4 : 3}
     >
@@ -499,17 +450,17 @@ export function DownloadProgressStep() {
         {/* Download Cards */}
         <div className="w-full max-w-lg space-y-4">
           {renderDownloadCard(
-            'Transcription Engine',
+            'Hosted ASR Engine (indic-transcribe)',
             <Mic className="w-5 h-5 text-gray-600" />,
             parakeetState,
-            '~670 MB'
+            `Connected via ${cleanHost}`
           )}
 
           {renderDownloadCard(
-            'Summary Engine',
+            'Hosted Gemma 4 Summary Engine',
             <Sparkles className="w-5 h-5 text-gray-600" />,
             summaryState,
-            getSummaryModelSizeLabel(selectedSummaryModel || recommendedSummaryModel),
+            `Connected via ${cleanHost}`,
             'MiB'
           )}
         </div>
@@ -546,8 +497,10 @@ export function DownloadProgressStep() {
           >
             {(isCompleting || !parakeetDownloaded) ? (
               <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-            ) : (
+            ) : isMac ? (
               'Continue'
+            ) : (
+              'Finish Setup & Start'
             )}
           </Button>
         </div>

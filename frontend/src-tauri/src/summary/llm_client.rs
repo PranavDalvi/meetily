@@ -365,6 +365,14 @@ pub(crate) async fn generate_summary(
             .parse()
             .map_err(|_| "Invalid content type".to_string())?,
     );
+    headers.insert(
+        header::HeaderName::from_static("bypass-tunnel-reminder"),
+        header::HeaderValue::from_static("true"),
+    );
+    headers.insert(
+        header::USER_AGENT,
+        header::HeaderValue::from_static("Meetily/1.0"),
+    );
 
     // Build request body based on provider
     let request_body = if provider != &LLMProvider::Claude {

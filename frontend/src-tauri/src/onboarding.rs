@@ -172,35 +172,61 @@ pub async fn complete_onboarding<R: Runtime>(
     app: AppHandle<R>,
     state: tauri::State<'_, AppState>,
     model: String,
+    api_key: Option<String>,
+    endpoint: Option<String>,
 ) -> Result<(), String> {
-    info!("Completing onboarding with builtin-ai model: {}", model);
+    info!("Completing onboarding with custom-openai Gemma 4 model: {}", model);
 
     // Step 1: Save model configuration to SQLite database FIRST
     let pool = state.db_manager.pool();
 
-    // Onboarding always uses builtin-ai (local LLM)
-    if let Err(e) = SettingsRepository::save_model_config(
-        pool,
-        "builtin-ai",
-        &model,
-        "large-v3",
-        None,
-    ).await {
-        error!("Failed to save builtin-ai model config: {}", e);
-        return Err(format!("Failed to save builtin-ai model config: {}", e));
-    }
-    info!("Saved builtin-ai model config: model={}", model);
+    let target_model = if model.is_empty() || model.starts_with("qwen") {
+        "gemma-4".to_string()
+    } else {
+        model.clone()
+    };
 
-    // Save transcription model config (parakeet provider) - always parakeet
+    let target_endpoint = endpoint
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "https://plain-turtles-refuse.loca.lt/v1".to_string());
+
+    let trimmed_key = api_key
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    let custom_summary_config = crate::summary::CustomOpenAIConfig {
+        endpoint: target_endpoint.clone(),
+        api_key: trimmed_key.clone(),
+        model: target_model.clone(),
+        max_tokens: None,
+        temperature: None,
+        top_p: None,
+    };
+
+    if let Err(e) = SettingsRepository::save_custom_openai_config(
+        pool,
+        &custom_summary_config,
+    ).await {
+        error!("Failed to save custom-openai summary model config: {}", e);
+        return Err(format!("Failed to save custom-openai summary model config: {}", e));
+    }
+    info!("Saved custom-openai summary model config: model={}", target_model);
+
+    // Save transcription model config with hosted OpenAI ASR (indic-transcribe)
     if let Err(e) = SettingsRepository::save_transcript_config(
         pool,
-        "parakeet",
-        crate::config::DEFAULT_PARAKEET_MODEL,
+        "openai",
+        "asr-indic-transcribe",
+        Some(&target_endpoint),
     ).await {
         error!("Failed to save transcription model config: {}", e);
         return Err(format!("Failed to save transcription model config: {}", e));
     }
-    info!("Saved transcription model config: provider=parakeet, model={}", crate::config::DEFAULT_PARAKEET_MODEL);
+    if let Some(ref k) = trimmed_key {
+        let _ = SettingsRepository::save_transcript_api_key(pool, "openai", k).await;
+    }
+    info!("Saved transcription model config: provider=openai, model=asr-indic-transcribe, endpoint={}", target_endpoint);
 
     // Step 2: Only NOW mark onboarding as complete (after DB operations succeed)
     let mut status = load_onboarding_status(&app)

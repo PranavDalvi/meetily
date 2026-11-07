@@ -165,6 +165,8 @@ async fn get_models_via_http_async(endpoint: Option<&str>) -> Result<Vec<OllamaM
 
     let response = client
         .get(&url)
+        .header("bypass-tunnel-reminder", "true")
+        .header("User-Agent", "Meetily/1.0")
         .timeout(Duration::from_secs(3)) // Per-request timeout
         .send()
         .await
@@ -289,6 +291,8 @@ pub async fn pull_ollama_model<R: Runtime>(
 
     let response = client
         .post(&url)
+        .header("bypass-tunnel-reminder", "true")
+        .header("User-Agent", "Meetily/1.0")
         .json(&payload)
         .timeout(Duration::from_secs(600)) // 10 minutes timeout for pulling
         .send()
@@ -449,6 +453,8 @@ pub async fn delete_ollama_model(
 
     let response = client
         .delete(&url)
+        .header("bypass-tunnel-reminder", "true")
+        .header("User-Agent", "Meetily/1.0")
         .json(&payload)
         .timeout(Duration::from_secs(30))
         .send()

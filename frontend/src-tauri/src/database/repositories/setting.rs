@@ -20,6 +20,7 @@ pub struct SaveTranscriptConfigRequest {
     pub model: String,
     #[serde(rename = "apiKey")]
     pub api_key: Option<String>,
+    pub endpoint: Option<String>,
 }
 
 pub struct SettingsRepository;
@@ -154,18 +155,21 @@ impl SettingsRepository {
         pool: &SqlitePool,
         provider: &str,
         model: &str,
+        endpoint: Option<&str>,
     ) -> std::result::Result<(), sqlx::Error> {
         sqlx::query(
             r#"
-            INSERT INTO transcript_settings (id, provider, model)
-            VALUES ('1', $1, $2)
+            INSERT INTO transcript_settings (id, provider, model, endpoint)
+            VALUES ('1', $1, $2, $3)
             ON CONFLICT(id) DO UPDATE SET
                 provider = excluded.provider,
-                model = excluded.model
+                model = excluded.model,
+                endpoint = COALESCE(excluded.endpoint, transcript_settings.endpoint)
             "#,
         )
         .bind(provider)
         .bind(model)
+        .bind(endpoint)
         .execute(pool)
         .await?;
 
@@ -335,6 +339,8 @@ impl SettingsRepository {
             INSERT INTO settings (id, provider, model, whisperModel, customOpenAIConfig)
             VALUES ('1', 'custom-openai', $1, 'large-v3', $2)
             ON CONFLICT(id) DO UPDATE SET
+                provider = 'custom-openai',
+                model = excluded.model,
                 customOpenAIConfig = excluded.customOpenAIConfig
             "#,
         )
