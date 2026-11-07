@@ -8,6 +8,9 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false  # Don't cancel releases, fail instead
 
+permissions:
+  contents: write
+
 jobs:
   # STEP 1: Create draft release first
   create-release:
